@@ -1,0 +1,3 @@
+# requirements for deployment
+nuitka
+imageio; platform_system == 'Windows'
