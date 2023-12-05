@@ -21,50 +21,50 @@ def main() -> int:
             # rejected
             return 0
     else:
+        if not sys.argv[1]:
+            return 0
         ofn = Path(sys.argv[1])
-    if not ofn:
-        return 0
 
+    binary_data: bytes
     try:
-        with open(ofn, "rb") as fin:
-            h = fin.read()
+        with open(ofn, "rb") as f_in:
+            binary_data = f_in.read()
     except Exception as ex:
-        messagebox.showwarning("Error", f"Unable to read '{ofn}':\n{ex}")
+        messagebox.showerror("Error", f"Unable to read '{ofn}':\n{ex}")
         return -2
     else:
-        if len(h) not in (16120, 48136):
-            messagebox.showwarning("Error", f"File '{ofn}' has wrong length: {len(h)}")
+        start_frequency: float
+        end_frequency: float
+        center_frequency: float
+        frequency_span: float
+        points_per_channel: int
+        (
+            _1,
+            _2,
+            start_frequency,
+            end_frequency,
+            center_frequency,
+            frequency_span,
+            _3,  # RBW?
+            points_per_channel,  # maybe it is of a shorted type, then padded
+            _4,  # ref level?
+            _5,
+        ) = struct.unpack_from("<2L5dQdf", binary_data)
+        # XXX: what are the unnamed values?!
+        #  is the number of channels @ the offset 0x54?
+
+        size_per_channel: int = 2001 * struct.calcsize("<d")
+        binary_data = binary_data[0x70:]
+        if len(binary_data) % size_per_channel:
+            messagebox.showerror("Error", f"File '{ofn}' seems corrupted")
             return -4
 
-        # test whether the file is binary
-        i = 0
-        while i < 8:
-            if not h[i : (i + 1)].isspace() and h[i] < b" "[0]:
-                break
-            i += 1
-        if i >= 8:
-            messagebox.showwarning(
-                "Error",
-                f"File '{ofn}' seems invalid",
-            )
-            return -2
+        number_of_channels: int = len(binary_data) // size_per_channel
 
-        fv = struct.unpack_from("=4d", h, 8)
-        # XXX: what are the other values?!
-
-        points_per_channel: int = min(2001, (h[0x31] << 8) + h[0x30])
-        size_per_channel: int = 2001 * struct.calcsize("=d")
-        h = h[0x70:]
-        if len(h) % size_per_channel:
-            messagebox.showwarning("Error", f"File '{ofn}' seems corrupted")
-            return -4
-
-        number_of_channels: int = len(h) // size_per_channel
-
-        v = [[] for _ in range(number_of_channels)]
+        y_values: list[list[float]] = []
         for ch in range(number_of_channels):
-            v[ch] = list(struct.unpack_from(f"={points_per_channel}d", h))
-            h = h[size_per_channel:]
+            y_values.append(list(struct.unpack_from(f"<{points_per_channel}d", binary_data)))
+            binary_data = binary_data[size_per_channel:]
 
     # get save filename
     sfn: Path
@@ -88,19 +88,19 @@ def main() -> int:
             # rejected
             return 0
     else:
+        if not sys.argv[2]:
+            return 0
         sfn = Path(sys.argv[2])
-    if not sfn:
-        return 0
 
     # fixing the file extension
     if sfn.suffix.casefold() != ".csv":
         sfn = sfn.with_name(sfn.name + ".csv")
 
-    sep = "\t"
+    sep: str = "\t"
 
     try:
-        with open(sfn, "wt") as fout:
-            fout.write(
+        with open(sfn, "wt") as f_out:
+            f_out.write(
                 sep.join(
                     (
                         repr("frequency, Hz"),
@@ -113,15 +113,18 @@ def main() -> int:
                 + "\n"
             )
             for point_index in range(points_per_channel):
-                fout.write(
+                frequency: float = start_frequency + frequency_span * point_index / (
+                    points_per_channel - 1
+                )
+                f_out.write(
                     sep.join(
                         (
                             locale.format_string(
                                 "%.12e",
-                                fv[0] + fv[3] * point_index / points_per_channel,
+                                frequency,
                             ),
                             *[
-                                locale.format_string("%.12e", v[ch][point_index])
+                                locale.format_string("%.12e", y_values[ch][point_index])
                                 for ch in range(number_of_channels)
                             ],
                         )
@@ -129,7 +132,7 @@ def main() -> int:
                     + "\n"
                 )
     except Exception as ex:
-        messagebox.showwarning("Error", f"Unable to write '{sfn}':\n{ex}")
+        messagebox.showerror("Error", f"Unable to write '{sfn}':\n{ex}")
         return -3
 
     messagebox.showinfo(message="File processed successfully")
