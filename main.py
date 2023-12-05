@@ -33,6 +33,10 @@ def main() -> int:
         messagebox.showerror("Error", f"Unable to read '{ofn}':\n{ex}")
         return -2
     else:
+        if len(binary_data) < 0x70:
+            messagebox.showerror("Error", f"File '{ofn}' seems corrupted")
+            return -4
+
         start_frequency: float
         end_frequency: float
         center_frequency: float
@@ -63,7 +67,9 @@ def main() -> int:
 
         y_values: list[list[float]] = []
         for ch in range(number_of_channels):
-            y_values.append(list(struct.unpack_from(f"<{points_per_channel}d", binary_data)))
+            y_values.append(
+                list(struct.unpack_from(f"<{points_per_channel}d", binary_data))
+            )
             binary_data = binary_data[size_per_channel:]
 
     # get save filename
