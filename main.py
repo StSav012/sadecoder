@@ -37,25 +37,60 @@ def main() -> int:
             messagebox.showerror("Error", f"File '{ofn}' seems corrupted")
             return -4
 
+        res_bw: int
+        video_bw: int
         start_frequency: float
         end_frequency: float
         center_frequency: float
         frequency_span: float
+        sweep_time_ns: float
         points_per_channel: int
+        ref_level: float
+        attenuation: float
+        is_display_line_shown: bool
+        display_line_position: float
+        selected_trace: int
+        is_trace1_written: bool
+        trace1_view_state: int
+        is_trace2_written: bool
+        trace2_view_state: int
+        is_trace3_written: bool
+        trace3_view_state: int
         (
-            _1,
-            _2,
+            res_bw,
+            video_bw,
             start_frequency,
             end_frequency,
             center_frequency,
             frequency_span,
-            _3,  # RBW?
-            points_per_channel,  # maybe it is of a shorted type, then padded
-            _4,  # ref level?
-            _5,
-        ) = struct.unpack_from("<2L5dQdf", binary_data)
-        # XXX: what are the unnamed values?!
-        #  is the number of channels @ the offset 0x54?
+            sweep_time_ns,
+            points_per_channel,  # maybe it is of an `h` type, then padded
+            ref_level,
+            attenuation,
+            is_display_line_shown,  # maybe it is of an `I` type, not padded
+            display_line_position,
+            selected_trace,  # zero-based, maybe it is of a `B` type, then padded
+            is_trace1_written,  # maybe it is of an `I` type, not padded
+            trace1_view_state,  # see below
+            _trace1_1,  # unknown
+            _trace1_averaging,  # unknown
+            is_trace2_written,  # maybe it is of an `I` type, not padded
+            trace2_view_state,  # see below
+            _trace2_1,  # unknown
+            _trace2_averaging,  # unknown
+            is_trace3_written,  # maybe it is of an `I` type, not padded
+            trace3_view_state,  # see below
+            _trace3_1,  # unknown
+            _trace3_averaging,  # unknown
+        ) = struct.unpack("<2L5dQdf?3xdI" + "?3xBBh" * 3 + "4x", binary_data[:0x70])
+        # View State:
+        #  0x00: clear write
+        #  0x01: min hold
+        #  0x02: max hold
+        #  0x03: view
+        #  0x04: blank
+        #  and there are more
+        # XXX: what are the values prefixed with an underscore?!
 
         size_per_channel: int = 2001 * struct.calcsize("<d")
         binary_data = binary_data[0x70:]
@@ -64,6 +99,9 @@ def main() -> int:
             return -4
 
         number_of_channels: int = len(binary_data) // size_per_channel
+        if number_of_channels != is_trace1_written + is_trace2_written + is_trace3_written:
+            messagebox.showerror("Error", f"File '{ofn}' seems corrupted")
+            return -4
 
         y_values: list[list[float]] = []
         for ch in range(number_of_channels):
