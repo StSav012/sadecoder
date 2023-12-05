@@ -109,7 +109,7 @@ def main() -> int:
             f_out.write(
                 sep.join(
                     (
-                        repr("frequency, Hz"),
+                        repr("Frequency, Hz"),
                         *[
                             repr(f"Trc{ch + 1}, dBm")
                             for ch in range(number_of_channels)
