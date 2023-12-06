@@ -1,9 +1,33 @@
 # coding=utf-8
+import enum
 import locale
 import struct
 import sys
 from pathlib import Path
 from tkinter import filedialog, messagebox
+from typing import Final
+
+MAX_TRACES: Final[int] = 3
+SIZE_PER_TRACE: Final[int] = 2001 * struct.calcsize("<d")
+
+
+class ViewState(enum.IntEnum):
+    ClearWrite = 0x00
+    MinHold = 0x05
+    MaxHold = 0x02
+    View = 0x03
+    Blank = 0x04
+    Averaging = 0x01
+
+
+VIEW_STATE_NAMES: Final[dict[int, str]] = {
+    ViewState.ClearWrite.value: "Clear Write",
+    ViewState.MinHold.value: "Min Hold",
+    ViewState.MaxHold.value: "Max Hold",
+    ViewState.View.value: "View",
+    ViewState.Blank.value: "Blank",
+    ViewState.Averaging.value: "Averaging",
+}
 
 
 def main() -> int:
@@ -50,12 +74,8 @@ def main() -> int:
         is_display_line_shown: bool
         display_line_position: float
         selected_trace: int
-        is_trace1_written: bool
-        trace1_view_state: int
-        is_trace2_written: bool
-        trace2_view_state: int
-        is_trace3_written: bool
-        trace3_view_state: int
+        is_trace_written: list[bool] = [False] * MAX_TRACES
+        trace_view_state: list[int] = [-1] * MAX_TRACES
         (
             res_bw,
             video_bw,
@@ -70,45 +90,37 @@ def main() -> int:
             is_display_line_shown,  # maybe it is of an `I` type, not padded
             display_line_position,
             selected_trace,  # zero-based, maybe it is of a `B` type, then padded
-            is_trace1_written,  # maybe it is of an `I` type, not padded
-            trace1_view_state,  # see below
-            _trace1_1,  # unknown
-            _trace1_averaging,  # unknown
-            is_trace2_written,  # maybe it is of an `I` type, not padded
-            trace2_view_state,  # see below
-            _trace2_1,  # unknown
-            _trace2_averaging,  # unknown
-            is_trace3_written,  # maybe it is of an `I` type, not padded
-            trace3_view_state,  # see below
-            _trace3_1,  # unknown
-            _trace3_averaging,  # unknown
-        ) = struct.unpack("<2L5dQdf?3xdI" + "?3xBBh" * 3 + "4x", binary_data[:0x70])
-        # View State:
-        #  0x00: clear write
-        #  0x01: min hold
-        #  0x02: max hold
-        #  0x03: view
-        #  0x04: blank
-        #  and there are more
+            is_trace_written[0],  # maybe it is of an `I` type, not padded
+            trace_view_state[0],  # see below
+            _always_03,  # unknown
+            is_trace_written[1],  # maybe it is of an `I` type, not padded
+            trace_view_state[1],  # see below
+            _always_03,  # unknown
+            is_trace_written[2],  # maybe it is of an `I` type, not padded
+            trace_view_state[2],  # see below
+            _always_03,  # unknown
+        ) = struct.unpack(
+            "<2L5dQdf?3xdI" + "?3xBB2x" * MAX_TRACES + "4x", binary_data[:0x70]
+        )
         # XXX: what are the values prefixed with an underscore?!
 
-        size_per_channel: int = 2001 * struct.calcsize("<d")
         binary_data = binary_data[0x70:]
-        if len(binary_data) % size_per_channel:
+        if len(binary_data) % SIZE_PER_TRACE:
             messagebox.showerror("Error", f"File '{ofn}' seems corrupted")
             return -4
 
-        number_of_channels: int = len(binary_data) // size_per_channel
-        if number_of_channels != is_trace1_written + is_trace2_written + is_trace3_written:
+        number_of_traces: int = len(binary_data) // SIZE_PER_TRACE
+        if number_of_traces != sum(is_trace_written):
             messagebox.showerror("Error", f"File '{ofn}' seems corrupted")
             return -4
 
-        y_values: list[list[float]] = []
-        for ch in range(number_of_channels):
-            y_values.append(
-                list(struct.unpack_from(f"<{points_per_channel}d", binary_data))
-            )
-            binary_data = binary_data[size_per_channel:]
+        y_values: dict[int, list[float]] = {}
+        for ch in range(number_of_traces):
+            if is_trace_written[ch] and trace_view_state[ch] != ViewState.Blank:
+                y_values[ch] = list(
+                    struct.unpack_from(f"<{points_per_channel}d", binary_data)
+                )
+                binary_data = binary_data[SIZE_PER_TRACE:]
 
     # get save filename
     sfn: Path
@@ -144,13 +156,27 @@ def main() -> int:
 
     try:
         with open(sfn, "wt") as f_out:
+            f_out.writelines(
+                (
+                    f"# Res BW [Hz]: {res_bw}\n",
+                    f"# Video BW [Hz]: {video_bw}\n",
+                    f"# Start Frequency [Hz]: {start_frequency}\n",
+                    f"# End Frequency [Hz]: {end_frequency}\n",
+                    f"# Center Frequency [Hz]: {center_frequency}\n",
+                    f"# Frequency Span [Hz]: {frequency_span}\n",
+                    f"# Sweep [ns]: {sweep_time_ns}\n",
+                    f"# Points: {points_per_channel}\n",
+                    f"# Ref Level: {ref_level}\n",
+                    f"# Attenuation: {attenuation}\n",
+                )
+            )
             f_out.write(
                 sep.join(
                     (
-                        repr("Frequency, Hz"),
+                        '"Frequency [Hz]"',
                         *[
-                            repr(f"Trc{ch + 1}, dBm")
-                            for ch in range(number_of_channels)
+                            f'"Trc{ch + 1} ({VIEW_STATE_NAMES[trace_view_state[ch]]})"'
+                            for ch in y_values
                         ],
                     )
                 )
@@ -163,13 +189,10 @@ def main() -> int:
                 f_out.write(
                     sep.join(
                         (
-                            locale.format_string(
-                                "%.12e",
-                                frequency,
-                            ),
+                            locale.format_string("%.12e", frequency),
                             *[
                                 locale.format_string("%.12e", y_values[ch][point_index])
-                                for ch in range(number_of_channels)
+                                for ch in y_values
                             ],
                         )
                     )
