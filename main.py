@@ -40,6 +40,7 @@ def main() -> int:
                     title="Open",
                     filetypes=[("SA Files", [".txt", ".ini", ".dat"])],
                 )
+                or ()  # to unify the result across platforms
             )
         except TypeError:
             # rejected
@@ -139,6 +140,7 @@ def main() -> int:
                         )
                     ],
                 )
+                or ()  # to unify the result across platforms
             )
         except TypeError:
             # rejected
